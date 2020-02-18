@@ -3,13 +3,20 @@ import email
 import re
 import os
 
+import ipwhois
+
 
 class MailBox:
-    def __init__(self):
+    """
+    The class’s task is to login to the mail server and determine
+    the real sender(IP address) of the mail message.
+    """
 
-        self.server = None
-        self.login = None
-        self.password = None
+    def __init__(self, server=None, login=None, password=None):
+
+        self.server = server
+        self.login = login
+        self.password = password
         self.imap = None
         self.path = None
         self.status = None
@@ -17,35 +24,90 @@ class MailBox:
         self.body_msg = None
         self.msg = None
         self.first_received_ip = None
+        self.country_network = None
+        self.all_received = None
 
     def sign_in(self):
 
-        self.imap = imaplib.IMAP4_SSL(self.server)
-        self.imap.login(self.login, self.password)
+        assert self.server, 'You did not pass the server value!'
+        assert self.login, 'You did not pass the login value!'
+        assert self.password, 'You did not pass the password value!'
 
-    def select_path(self, path):
+        try:
+            self.imap = imaplib.IMAP4_SSL(self.server)
+            self.imap.login(self.login, self.password)
+        except imaplib.IMAP4.error:
+            print('Log in failed. Please, check you login and password.')
+
+    @staticmethod
+    def __choice_last_msg(ids):
+
+        list_ids = ids[0].split()
+        last_msg = list_ids[-1]
+
+        return last_msg
+
+    def select_path(self, path='INBOX'):
+
+        """
+        list()  List mailbox names in directory matching pattern.
+        select() Select a mailbox
+        search() Search mailbox for matching messages. Charset may be None, in
+        which case no CHARSET will be specified in the request to the server.
+        :param path: Select a mailbox, the default mailbox is 'INBOX'
+        :return: status, ids messages
+        """
 
         self.imap.list()
         self.imap.select(path)
         self.status, self.ids = self.imap.search(None, 'ALL')
 
-    def choice_last_msg(self):
-
-        list_ids = self.ids[0].split()
-        last_msg = list_ids[-1]
-        self.body_msg = self.imap.fetch(last_msg, '(RFC822)')
-
     def message_from_bytes(self):
 
+        self.body_msg = self.imap.fetch(self.__choice_last_msg(
+            self.ids), '(RFC822)')
         self.msg = email.message_from_bytes(self.body_msg[1][0][1])
 
-    def find_first_received_ip(self):
+    @staticmethod
+    def __get_whois_rdap(ip):
 
-        all_received = self.msg.get_all('Received')
-        self.first_received_ip = re.findall(
-            r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
-            all_received[-1]
-        )
+        """
+        The function provides the sender country code.
+        :param ip: ip address first received.
+        :return: country code first received.
+        """
+
+        data = ipwhois.IPWhois(ip).lookup_rdap(
+            asn_methods=['dns', 'whois', 'http'])
+
+        if data['network']['country'] is None:
+            data = data['asn_country_code']
+        else:
+            data = data['network']['country']
+
+        return data
+
+    def find_first_received_ip_and_country(self):
+
+        """
+        Get all Received and return first Received.
+        Through RDAP finds the country code.
+        """
+
+        self.all_received = self.msg.get_all('Received')
+        pattern = r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+
+        try:
+            self.first_received_ip = re.findall(
+                pattern, self.all_received[-1])[0]
+            self.country_network = self.__get_whois_rdap(
+                self.first_received_ip)
+
+        except (IndexError, ipwhois.exceptions.IPDefinedError):
+            self.first_received_ip = re.findall(
+                pattern, self.all_received[-2])[0]
+            self.country_network = self.__get_whois_rdap(
+                self.first_received_ip)
 
     def exit_form_mailbox(self):
 
