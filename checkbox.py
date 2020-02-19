@@ -26,6 +26,7 @@ class MailBox:
         self.first_received_ip = None
         self.country_network = None
         self.all_received = None
+        self.last_msg = None
 
     def sign_in(self):
 
@@ -64,8 +65,8 @@ class MailBox:
 
     def message_from_bytes(self):
 
-        self.body_msg = self.imap.fetch(self.__choice_last_msg(
-            self.ids), '(RFC822)')
+        self.last_msg = self.__choice_last_msg(self.ids)
+        self.body_msg = self.imap.fetch(self.last_msg, '(RFC822)')
         self.msg = email.message_from_bytes(self.body_msg[1][0][1])
 
     @staticmethod
@@ -95,19 +96,44 @@ class MailBox:
         """
 
         self.all_received = self.msg.get_all('Received')
-        pattern = r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+        pattern_ipv4 = r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+        pattern_ipv6 = r'(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|' \
+                       r'([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}' \
+                       r':){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)' \
+                       r'{1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:)' \
+                       r'{1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:)' \
+                       r'{1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:)' \
+                       r'{1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:' \
+                       r'((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4})' \
+                       r'{1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]' \
+                       r'{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|' \
+                       r'(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]' \
+                       r'|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}' \
+                       r':){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])' \
+                       r'\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))'
 
         try:
             self.first_received_ip = re.findall(
-                pattern, self.all_received[-1])[0]
+                pattern_ipv4, self.all_received[-1])[0]
             self.country_network = self.__get_whois_rdap(
                 self.first_received_ip)
 
         except (IndexError, ipwhois.exceptions.IPDefinedError):
             self.first_received_ip = re.findall(
-                pattern, self.all_received[-2])[0]
+                pattern_ipv4, self.all_received[-2])[0]
             self.country_network = self.__get_whois_rdap(
                 self.first_received_ip)
+
+    def move_to_spam(self):
+
+        """
+        The method moves the last message to the trash and deletes it.
+        """
+
+        copy_res = self.imap.copy(self.last_msg, 'Trash')
+        if copy_res[0] == 'OK':
+            self.imap.store(self.last_msg, '+FLAGS', '\\Deleted')
+            self.imap.expunge()
 
     def exit_form_mailbox(self):
 
