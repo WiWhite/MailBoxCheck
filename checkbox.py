@@ -96,31 +96,37 @@ class MailBox:
         """
 
         self.all_received = self.msg.get_all('Received')
-        pattern_ipv4 = r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
-        pattern_ipv6 = r'(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|' \
-                       r'([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}' \
-                       r':){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)' \
-                       r'{1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:)' \
-                       r'{1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:)' \
-                       r'{1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:)' \
-                       r'{1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:' \
-                       r'((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4})' \
-                       r'{1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]' \
-                       r'{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|' \
-                       r'(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]' \
-                       r'|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}' \
-                       r':){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])' \
-                       r'\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))'
+
+        ipv4seg = r'(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])'
+        ipv4addr = r'(?:(?:' + ipv4seg + r'\.){3,3}' + ipv4seg + r')'
+        ipv6seg = r'(?:(?:[0-9a-fA-F]){1,4})'
+        ipv4_6groups = (
+            r'(?:' + ipv6seg + r':){7,7}' + ipv6seg,
+            r'(?:' + ipv6seg + r':){1,7}:',
+            r'(?:' + ipv6seg + r':){1,6}:' + ipv6seg,
+            r'(?:' + ipv6seg + r':){1,5}(?::' + ipv6seg + r'){1,2}',
+            r'(?:' + ipv6seg + r':){1,4}(?::' + ipv6seg + r'){1,3}',
+            r'(?:' + ipv6seg + r':){1,3}(?::' + ipv6seg + r'){1,4}',
+            r'(?:' + ipv6seg + r':){1,2}(?::' + ipv6seg + r'){1,5}',
+            ipv6seg + r':(?:(?::' + ipv6seg + r'){1,6})',
+            r':(?:(?::' + ipv6seg + r'){1,7}|:)',
+            r'fe80:(?::' + ipv6seg + r'){0,4}%[0-9a-zA-Z]{1,}',
+            r'::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:]' + ipv4addr,
+            r'(?:' + ipv6seg + r':){1,4}:[^\s:]' + ipv4addr,
+            ipv4addr
+        )
+
+        ipv4_6addr = '|'.join(['(?:{})'.format(g) for g in ipv4_6groups[::-1]])
 
         try:
             self.first_received_ip = re.findall(
-                pattern_ipv4, self.all_received[-1])[0]
+                ipv4_6addr, self.all_received[-1])[0]
             self.country_network = self.__get_whois_rdap(
                 self.first_received_ip)
 
         except (IndexError, ipwhois.exceptions.IPDefinedError):
             self.first_received_ip = re.findall(
-                pattern_ipv4, self.all_received[-2])[0]
+                ipv4_6addr, self.all_received[-2])[0]
             self.country_network = self.__get_whois_rdap(
                 self.first_received_ip)
 
@@ -130,7 +136,7 @@ class MailBox:
         The method moves the last message to the trash and deletes it.
         """
 
-        copy_res = self.imap.copy(self.last_msg, 'Trash')
+        copy_res = self.imap.copy(self.last_msg, 'Junk')
         if copy_res[0] == 'OK':
             self.imap.store(self.last_msg, '+FLAGS', '\\Deleted')
             self.imap.expunge()
