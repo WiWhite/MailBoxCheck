@@ -1,6 +1,10 @@
 import imaplib
 import email
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import re
+import smtplib
 import os
 
 import ipwhois
@@ -27,6 +31,7 @@ class MailBox:
         self.country_network = None
         self.all_received = None
         self.last_msg = None
+        self.msg_string = None
 
     def sign_in(self):
 
@@ -60,7 +65,7 @@ class MailBox:
         """
 
         self.imap.list()
-        self.imap.select(path)
+        self.imap.select(path, readonly=True)
         self.status, self.ids = self.imap.search(None, 'ALL')
 
     def message_from_bytes(self):
@@ -78,13 +83,17 @@ class MailBox:
         :return: country code first received.
         """
 
-        data = ipwhois.IPWhois(ip).lookup_rdap(
-            asn_methods=['dns', 'whois', 'http'])
+        if ip == '127.0.0.1':
+            data = 'localhost'
 
-        if data['network']['country'] is None:
-            data = data['asn_country_code']
         else:
-            data = data['network']['country']
+            data = ipwhois.IPWhois(ip).lookup_rdap(
+                asn_methods=['dns', 'whois', 'http'])
+
+            if data['network']['country'] is None:
+                data = data['asn_country_code']
+            else:
+                data = data['network']['country']
 
         return data
 
@@ -140,6 +149,88 @@ class MailBox:
         if copy_res[0] == 'OK':
             self.imap.store(self.last_msg, '+FLAGS', '\\Deleted')
             self.imap.expunge()
+
+    def check_and_send_message(self, to, smtp_server, port=25):
+
+        """
+        This method performs three actions:
+        - checks for the presence of a file in the message
+        - creates a message to send
+        - sends a message
+        """
+
+        file_name = self.__check_and_save_file(self.msg)
+
+        msg = self.__create_msg(
+            self.login,
+            to,
+            file_name,
+            self.first_received_ip,
+            self.country_network
+        )
+
+        self.__send_message(self.login, to, smtp_server, port, msg)
+
+    @staticmethod
+    def __create_msg(from_, to, filename, received_ip, country_network):
+
+        """
+        Creates a message to send.
+        """
+
+        msg = MIMEMultipart()
+        msg['From'] = from_
+        msg['To'] = to
+        with open(filename, 'rb') as file:
+            content = MIMEApplication(file.read())
+        content['Content-Disposition'] = \
+            'attachment; filename={}'.format(filename)
+        text = '{}\n{}'.format(received_ip, country_network)
+        msg.attach(content)
+        msg.attach(MIMEText(text))
+        os.remove(filename)
+
+        return msg
+
+    @staticmethod
+    def __send_message(
+            from_,
+            to,
+            smtp_server,
+            port,
+            msg,
+    ):
+
+        smtp = smtplib.SMTP(smtp_server, port)
+        smtp.starttls()
+        smtp.sendmail(
+            from_,
+            to,
+            msg.as_string()
+        )
+        smtp.quit()
+
+    @staticmethod
+    def __check_and_save_file(msg):
+
+        """
+        Checks for the presence of a file in the message and save it.
+        """
+
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+            file_name = part.get_filename()
+            if bool(file_name):
+                file_path = os.path.join(os.getcwd(), file_name)
+
+                fp = open(file_path, 'wb')
+                fp.write(part.get_payload(decode=True))
+                fp.close()
+
+            return file_name
 
     def exit_form_mailbox(self):
 
